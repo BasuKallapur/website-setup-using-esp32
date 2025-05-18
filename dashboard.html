@@ -164,9 +164,9 @@
                 
                 // Update gauges (normalized to 0-100%)
                 const maxCurrent = 5; // Assuming 5A max for ACS712-5A
-                inputCurrentGauge.style.height = `${(data.inputCurrent / maxCurrent * 100)}%`;
-                loadCurrentGauge.style.height = `${(data.loadCurrent / maxCurrent * 100)}%`;
-                diffCurrentGauge.style.height = `${(data.difference / maxCurrent * 100)}%`;
+                inputCurrentGauge.style.height = Math.max(0, Math.min(100, (data.inputCurrent / maxCurrent * 100))) + '%';
+                loadCurrentGauge.style.height = Math.max(0, Math.min(100, (data.loadCurrent / maxCurrent * 100))) + '%';
+                diffCurrentGauge.style.height = Math.max(0, Math.min(100, (data.difference / maxCurrent * 100))) + '%';
                 
                 // Fetch status
                 const statusResponse = await fetch(`${API_BASE_URL}/api/status`);

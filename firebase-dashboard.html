@@ -181,19 +181,19 @@
                 inputCurrentValue.textContent = data.input_current.toFixed(3);
                 // Update gauge (normalized to 0-100%)
                 const maxCurrent = 5; // Assuming 5A max for ACS712-5A
-                inputCurrentGauge.style.height = `${(data.input_current / maxCurrent * 100)}%`;
+                inputCurrentGauge.style.height = Math.max(0, Math.min(100, (data.input_current / maxCurrent * 100))) + '%';
             }
             
             if (data.load_current !== undefined) {
                 loadCurrentValue.textContent = data.load_current.toFixed(3);
                 const maxCurrent = 5;
-                loadCurrentGauge.style.height = `${(data.load_current / maxCurrent * 100)}%`;
+                loadCurrentGauge.style.height = Math.max(0, Math.min(100, (data.load_current / maxCurrent * 100))) + '%';
             }
             
             if (data.difference !== undefined) {
                 diffCurrentValue.textContent = data.difference.toFixed(3);
                 const maxCurrent = 5;
-                diffCurrentGauge.style.height = `${(data.difference / maxCurrent * 100)}%`;
+                diffCurrentGauge.style.height = Math.max(0, Math.min(100, (data.difference / maxCurrent * 100))) + '%';
                 
                 // Optimize theft detection response based on difference
                 // Preemptively update UI when difference is very low
@@ -384,7 +384,7 @@
                 if (difference !== null && difference !== undefined) {
                     diffCurrentValue.textContent = difference.toFixed(3);
                     const maxCurrent = 5;
-                    diffCurrentGauge.style.height = `${(difference / maxCurrent * 100)}%`;
+                    diffCurrentGauge.style.height = Math.max(0, Math.min(100, (difference / maxCurrent * 100))) + '%';
                     
                     // If difference is very small and we're in theft state, prepare for potential status change
                     theftDetectionRef.child('theft_detected').once('value').then(theftSnapshot => {

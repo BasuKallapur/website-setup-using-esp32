@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Theft Detection Dashboard</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin="" />
+    <!-- Leaflet JS for maps -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+            crossorigin=""></script>
+    
+    <!-- Firebase App (the core Firebase SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <!-- Firebase Realtime Database -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    
+    <style>
+        #map {
+            height: 300px;
+            width: 100%;
+            border-radius: 0.5rem;
+        }
+        .current-gauge {
+            height: 150px;
+            position: relative;
+        }
+        .gauge-value {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            transition: height 0.5s ease;
+        }
+        /* Blinking animation for theft alert */
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+        .blink-alert {
+            animation: blink 1s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6">
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">ESP32 Theft Detection System</h1>
+        
+        <!-- Theft Alert Banner - Hidden by default -->
+        <div id="theft-alert" class="hidden bg-red-600 text-white text-center py-4 rounded-lg mb-6 blink-alert">
+            <h2 class="text-xl font-bold">⚠️ THEFT DETECTED! ⚠️</h2>
+            <p>Manual action required. Cutoff power using the button below.</p>
+        </div>
+        
+        <!-- Status Card -->
+        <div id="status-card" class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4">System Status</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <div id="status-indicator" class="bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2">
+                        NORMAL
+                    </div>
+                    <div id="power-status" class="bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center">
+                        POWER ON
+                    </div>
+                </div>
+                <div class="flex flex-col justify-center items-center md:items-end space-y-3">
+                    <button id="cutoff-btn" class="w-full md:w-auto bg-red-500 hover:bg-red-700 text-white font-bold py-3 px-6 rounded text-lg">
+                        EMERGENCY CUTOFF
+                    </button>
+                    <button id="restore-btn" class="w-full md:w-auto bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-6 rounded text-lg">
+                        RESTORE POWER
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Current Readings -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4">Current Readings</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Input Current -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Input Current</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="input-current-gauge" class="gauge-value bg-blue-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="input-current-value">0</span> A</p>
+                </div>
+                
+                <!-- Load Current -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Load Current</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="load-current-gauge" class="gauge-value bg-green-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="load-current-value">0</span> A</p>
+                </div>
+                
+                <!-- Difference -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Difference</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="diff-current-gauge" class="gauge-value bg-yellow-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="diff-current-value">0</span> A</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Location Map -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-xl font-bold mb-4">Location</h2>
+            <div id="map"></div>
+        </div>
+        
+        <!-- Connection Status -->
+        <div id="connection-status" class="fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg flex items-center">
+            <span id="connection-indicator" class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+            <span id="connection-text">Disconnected</span>
+        </div>
+    </div>
+    
+    <!-- Script -->
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyBc1-TjprtzvD0S_AcNNnO3xhs-c1pBYVU",
+            authDomain: "esp32-theft-detection.firebaseapp.com",
+            databaseURL: "https://esp32-theft-detection-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "esp32-theft-detection",
+            storageBucket: "esp32-theft-detection.firebasestorage.app",
+            messagingSenderId: "665242444853",
+            appId: "1:665242444853:web:c3c32c96843e4a2b5fbd7c"
+        };
+        
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const theftDetectionRef = database.ref('/theft_detection');
+        
+        // Elements
+        const inputCurrentValue = document.getElementById('input-current-value');
+        const loadCurrentValue = document.getElementById('load-current-value');
+        const diffCurrentValue = document.getElementById('diff-current-value');
+        const inputCurrentGauge = document.getElementById('input-current-gauge');
+        const loadCurrentGauge = document.getElementById('load-current-gauge');
+        const diffCurrentGauge = document.getElementById('diff-current-gauge');
+        const statusIndicator = document.getElementById('status-indicator');
+        const powerStatus = document.getElementById('power-status');
+        const cutoffBtn = document.getElementById('cutoff-btn');
+        const restoreBtn = document.getElementById('restore-btn');
+        const connectionIndicator = document.getElementById('connection-indicator');
+        const connectionText = document.getElementById('connection-text');
+        const theftAlert = document.getElementById('theft-alert');
+        
+        // Initialize map
+        let map;
+        let marker;
+        
+        function updateUI(data) {
+            if (!data) return;
+            
+            // Update connection status
+            connectionIndicator.className = 'w-3 h-3 rounded-full bg-green-500 mr-2';
+            connectionText.textContent = 'Connected';
+            
+            // Update current values
+            if (data.input_current !== undefined) {
+                inputCurrentValue.textContent = data.input_current.toFixed(3);
+                // Update gauge (normalized to 0-100%)
+                const maxCurrent = 5; // Assuming 5A max for ACS712-5A
+                inputCurrentGauge.style.height = `${(data.input_current / maxCurrent * 100)}%`;
+            }
+            
+            if (data.load_current !== undefined) {
+                loadCurrentValue.textContent = data.load_current.toFixed(3);
+                const maxCurrent = 5;
+                loadCurrentGauge.style.height = `${(data.load_current / maxCurrent * 100)}%`;
+            }
+            
+            if (data.difference !== undefined) {
+                diffCurrentValue.textContent = data.difference.toFixed(3);
+                const maxCurrent = 5;
+                diffCurrentGauge.style.height = `${(data.difference / maxCurrent * 100)}%`;
+            }
+            
+            // Update status indicators
+            if (data.theft_detected !== undefined) {
+                if (data.theft_detected) {
+                    statusIndicator.textContent = 'THEFT DETECTED';
+                    statusIndicator.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                    // Show theft alert banner
+                    theftAlert.classList.remove('hidden');
+                    // Make cutoff button more noticeable
+                    cutoffBtn.classList.add('ring-4', 'ring-red-300', 'ring-offset-2');
+                    // Add notification sound if not already played
+                    if (!window.theftAlertPlayed) {
+                        try {
+                            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/937/937-preview.mp3');
+                            audio.play();
+                            window.theftAlertPlayed = true;
+                        } catch (e) {
+                            console.error('Could not play alert sound', e);
+                        }
+                    }
+                } else {
+                    statusIndicator.textContent = 'NORMAL';
+                    statusIndicator.className = 'bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                    // Hide theft alert banner
+                    theftAlert.classList.add('hidden');
+                    // Remove emphasis from cutoff button
+                    cutoffBtn.classList.remove('ring-4', 'ring-red-300', 'ring-offset-2');
+                    // Reset alert sound flag
+                    window.theftAlertPlayed = false;
+                }
+            }
+            
+            if (data.power_cutoff !== undefined) {
+                if (data.power_cutoff) {
+                    powerStatus.textContent = 'POWER OFF';
+                    powerStatus.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center';
+                } else {
+                    powerStatus.textContent = 'POWER ON';
+                    powerStatus.className = 'bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center';
+                }
+            }
+            
+            // Update map if we have location data and map is initialized
+            if (data.location && map) {
+                if (marker) {
+                    marker.setLatLng([data.location.latitude, data.location.longitude]);
+                }
+            }
+        }
+        
+        // Initialize map
+        function initMap() {
+            theftDetectionRef.child('location').once('value').then((snapshot) => {
+                const locationData = snapshot.val();
+                if (locationData && locationData.latitude && locationData.longitude) {
+                    map = L.map('map').setView([locationData.latitude, locationData.longitude], 15);
+                    
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    }).addTo(map);
+                    
+                    marker = L.marker([locationData.latitude, locationData.longitude])
+                        .addTo(map)
+                        .bindPopup('Theft Detection System')
+                        .openPopup();
+                } else {
+                    // Fallback to hardcoded coordinates if not in Firebase yet
+                    const defaultLat = 12.938477;
+                    const defaultLng = 77.564919;
+                    
+                    map = L.map('map').setView([defaultLat, defaultLng], 15);
+                    
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    }).addTo(map);
+                    
+                    marker = L.marker([defaultLat, defaultLng])
+                        .addTo(map)
+                        .bindPopup('Theft Detection System')
+                        .openPopup();
+                }
+            }).catch((error) => {
+                console.error('Error loading location data:', error);
+                // Fallback to hardcoded coordinates if Firebase fails
+                const defaultLat = 12.938477;
+                const defaultLng = 77.564919;
+                
+                map = L.map('map').setView([defaultLat, defaultLng], 15);
+                
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+                
+                marker = L.marker([defaultLat, defaultLng])
+                    .addTo(map)
+                    .bindPopup('Theft Detection System')
+                    .openPopup();
+            });
+        }
+        
+        // Button event handlers
+        cutoffBtn.addEventListener('click', async () => {
+            try {
+                await theftDetectionRef.child('commands').update({
+                    cutoff: true
+                });
+                alert('Power cutoff command sent!');
+            } catch (error) {
+                console.error('Error sending cutoff command:', error);
+                alert('Failed to send cutoff command');
+            }
+        });
+        
+        restoreBtn.addEventListener('click', async () => {
+            try {
+                await theftDetectionRef.child('commands').update({
+                    restore: true
+                });
+                alert('Power restore command sent!');
+            } catch (error) {
+                console.error('Error sending restore command:', error);
+                alert('Failed to send restore command');
+            }
+        });
+        
+        // Firebase real-time listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize map
+            initMap();
+            
+            // Listen for data changes
+            theftDetectionRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                updateUI(data);
+            }, (error) => {
+                console.error('Firebase data error:', error);
+                connectionIndicator.className = 'w-3 h-3 rounded-full bg-red-500 mr-2';
+                connectionText.textContent = 'Disconnected';
+            });
+        });
+    </script>
+</body>
+</html> 

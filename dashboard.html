@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Theft Detection Dashboard</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin="" />
+    <!-- Leaflet JS for maps -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+            crossorigin=""></script>
+    <style>
+        #map {
+            height: 300px;
+            width: 100%;
+            border-radius: 0.5rem;
+        }
+        .current-gauge {
+            height: 150px;
+            position: relative;
+        }
+        .gauge-value {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            transition: height 0.5s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6">
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">ESP32 Theft Detection System</h1>
+        
+        <!-- Status Card -->
+        <div id="status-card" class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4">System Status</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <div id="status-indicator" class="bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2">
+                        NORMAL
+                    </div>
+                    <div id="power-status" class="bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center">
+                        POWER ON
+                    </div>
+                </div>
+                <div class="flex justify-center md:justify-end space-x-4">
+                    <button id="cutoff-btn" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
+                        Emergency Cutoff
+                    </button>
+                    <button id="restore-btn" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                        Restore Power
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Current Readings -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4">Current Readings</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Input Current -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Input Current</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="input-current-gauge" class="gauge-value bg-blue-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="input-current-value">0</span> A</p>
+                </div>
+                
+                <!-- Load Current -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Load Current</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="load-current-gauge" class="gauge-value bg-green-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="load-current-value">0</span> A</p>
+                </div>
+                
+                <!-- Difference -->
+                <div>
+                    <h3 class="text-lg font-semibold text-center mb-2">Difference</h3>
+                    <div class="current-gauge bg-gray-200 rounded">
+                        <div id="diff-current-gauge" class="gauge-value bg-yellow-500 rounded"></div>
+                    </div>
+                    <p class="text-center mt-2"><span id="diff-current-value">0</span> A</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Location Map -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-xl font-bold mb-4">Location</h2>
+            <div id="map"></div>
+        </div>
+    </div>
+    
+    <!-- Script -->
+    <script>
+        // ESP32 API URL - Prompt user for ESP32's IP address or use default
+        let savedIpAddress = localStorage.getItem('esp32_ip_address');
+        let API_BASE_URL = savedIpAddress ? `http://${savedIpAddress}` : 'http://192.168.0.104';
+        
+        // Allow user to change IP address
+        const changeIpAddress = () => {
+            const newIp = prompt("Enter ESP32 IP address:", savedIpAddress || "192.168.1.100");
+            if (newIp && newIp.trim() !== "") {
+                API_BASE_URL = `http://${newIp.trim()}`;
+                localStorage.setItem('esp32_ip_address', newIp.trim());
+                fetchData(); // Refresh with new IP
+            }
+        };
+        
+        // Add connection status indicator
+        const connectionStatus = document.createElement('div');
+        connectionStatus.className = 'fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg flex items-center';
+        connectionStatus.innerHTML = `
+            <span id="connection-indicator" class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+            <span id="connection-text">Disconnected</span>
+            <button onclick="changeIpAddress()" class="ml-4 bg-blue-500 hover:bg-blue-700 text-xs py-1 px-2 rounded">
+                Change IP
+            </button>
+        `;
+        document.body.appendChild(connectionStatus);
+        
+        const connectionIndicator = document.getElementById('connection-indicator');
+        const connectionText = document.getElementById('connection-text');
+        
+        // Elements
+        const inputCurrentValue = document.getElementById('input-current-value');
+        const loadCurrentValue = document.getElementById('load-current-value');
+        const diffCurrentValue = document.getElementById('diff-current-value');
+        const inputCurrentGauge = document.getElementById('input-current-gauge');
+        const loadCurrentGauge = document.getElementById('load-current-gauge');
+        const diffCurrentGauge = document.getElementById('diff-current-gauge');
+        const statusIndicator = document.getElementById('status-indicator');
+        const powerStatus = document.getElementById('power-status');
+        const cutoffBtn = document.getElementById('cutoff-btn');
+        const restoreBtn = document.getElementById('restore-btn');
+        
+        // Initialize map
+        let map;
+        let marker;
+        
+        // Fetch data function
+        async function fetchData() {
+            try {
+                // Fetch current data
+                const dataResponse = await fetch(`${API_BASE_URL}/api/data`);
+                const data = await dataResponse.json();
+                
+                // Update connection status
+                connectionIndicator.className = 'w-3 h-3 rounded-full bg-green-500 mr-2';
+                connectionText.textContent = 'Connected';
+                
+                // Update current values
+                inputCurrentValue.textContent = data.inputCurrent.toFixed(3);
+                loadCurrentValue.textContent = data.loadCurrent.toFixed(3);
+                diffCurrentValue.textContent = data.difference.toFixed(3);
+                
+                // Update gauges (normalized to 0-100%)
+                const maxCurrent = 5; // Assuming 5A max for ACS712-5A
+                inputCurrentGauge.style.height = `${(data.inputCurrent / maxCurrent * 100)}%`;
+                loadCurrentGauge.style.height = `${(data.loadCurrent / maxCurrent * 100)}%`;
+                diffCurrentGauge.style.height = `${(data.difference / maxCurrent * 100)}%`;
+                
+                // Fetch status
+                const statusResponse = await fetch(`${API_BASE_URL}/api/status`);
+                const status = await statusResponse.json();
+                
+                // Update status indicators
+                if (status.theftDetected) {
+                    statusIndicator.textContent = 'THEFT DETECTED';
+                    statusIndicator.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                } else {
+                    statusIndicator.textContent = 'NORMAL';
+                    statusIndicator.className = 'bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                }
+                
+                if (status.powerCutoff) {
+                    powerStatus.textContent = 'POWER OFF';
+                    powerStatus.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center';
+                } else {
+                    powerStatus.textContent = 'POWER ON';
+                    powerStatus.className = 'bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center';
+                }
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                // Update connection status to show disconnected
+                connectionIndicator.className = 'w-3 h-3 rounded-full bg-red-500 mr-2';
+                connectionText.textContent = 'Disconnected';
+            }
+        }
+        
+        // Initialize location map
+        async function initMap() {
+            try {
+                const locationResponse = await fetch(`${API_BASE_URL}/api/location`);
+                const locationData = await locationResponse.json();
+                
+                map = L.map('map').setView([locationData.latitude, locationData.longitude], 15);
+                
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+                
+                marker = L.marker([locationData.latitude, locationData.longitude])
+                    .addTo(map)
+                    .bindPopup('Theft Detection System')
+                    .openPopup();
+            } catch (error) {
+                console.error('Error loading map:', error);
+            }
+        }
+        
+        // Button event handlers
+        cutoffBtn.addEventListener('click', async () => {
+            try {
+                await fetch(`${API_BASE_URL}/api/cutoff`, {
+                    method: 'POST'
+                });
+                alert('Power cutoff command sent!');
+                fetchData(); // Refresh data
+            } catch (error) {
+                console.error('Error sending cutoff command:', error);
+                alert('Failed to send cutoff command');
+            }
+        });
+        
+        restoreBtn.addEventListener('click', async () => {
+            try {
+                await fetch(`${API_BASE_URL}/api/restore`, {
+                    method: 'POST'
+                });
+                alert('Power restore command sent!');
+                fetchData(); // Refresh data
+            } catch (error) {
+                console.error('Error sending restore command:', error);
+                alert('Failed to send restore command');
+            }
+        });
+        
+        // Initialize and set up periodic updates
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initial data fetch
+            fetchData();
+            
+            // Initialize map
+            initMap();
+            
+            // Set up periodic updates (every 2 seconds)
+            setInterval(fetchData, 2000);
+        });
+    </script>
+</body>
+</html> 

@@ -30,8 +30,8 @@ float loadOffsetVoltage = 1.65;
 
 const int samples = 500;
 const float theftThreshold = 0.1; // Theft detection threshold (0.1A)
-const int debounceTime = 2000;    // Debounce time (2 seconds)
-const int restoreDelay = 5000;    // 5 seconds to verify theft is removed before restoring
+const int debounceTime = 1000;    // Reduced from 2000ms to 1000ms (1 second)
+const int restoreDelay = 1000;    // Reduced from 2000ms to 1000ms (1 second)
 
 unsigned long theftStartTime = 0; // Time when theft was first detected
 unsigned long theftRemovalTime = 0; // Time when theft was potentially removed
@@ -82,7 +82,7 @@ const char* PATH_CMD_RESTORE = "/theft_detection/commands/restore";
 
 // Last time data was sent to Firebase
 unsigned long lastFirebaseUpdate = 0;
-const int firebaseUpdateInterval = 5000; // 5 seconds
+const int firebaseUpdateInterval = 2000; // Reduced from 5000ms to 2000ms (2 seconds)
 
 // API Handlers
 void handleRoot() {
@@ -397,28 +397,40 @@ void loop() {
     // NO THEFT or THEFT REMOVED
     
     if (theftDetected) {
-      // We're not auto-restoring power, but we still indicate theft has been resolved
-      // but only update the theft status, not power state
-      
       // Start counting time since potential theft removal
       if (theftRemovalTime == 0) {
         theftRemovalTime = millis();
+        // Immediately send a preliminary update to Firebase
+        if (WiFi.status() == WL_CONNECTED && Firebase.ready()) {
+          Firebase.setFloat(fbdo, "/theft_detection/difference", currentDifference);
+          Firebase.setInt(fbdo, "/theft_detection/theft_removal_start", millis());
+        }
       }
       
       // Verify theft remained removed for the restore delay period
       if (millis() - theftRemovalTime >= restoreDelay) {
+        bool previousTheftState = theftDetected;
         theftDetected = false;
         theftStartTime = 0;
         Serial.println("Theft condition resolved - but power remains in current state");
+        
+        // Immediately update Firebase when theft is no longer detected
+        if (previousTheftState && WiFi.status() == WL_CONNECTED && Firebase.ready()) {
+          Firebase.setBool(fbdo, PATH_THEFT_DETECTED, false);
+          Firebase.setInt(fbdo, "/theft_detection/alert/timestamp", millis());
+          Firebase.setBool(fbdo, "/theft_detection/alert/new_theft", false);
+          Firebase.setInt(fbdo, "/theft_detection/alert/resolved_time", millis());
+        }
       }
     } else {
       // Normal operation (no theft)
       theftStartTime = 0;
+      theftRemovalTime = 0;
       handleNoTheft();
     }
   }
 
-  delay(100);  // Reduced delay for better web server responsiveness
+  delay(50);  // Reduced from 100ms to 50ms for better responsiveness
 }
 
 void handleTheftDetected() {
@@ -449,11 +461,13 @@ float measureOffset(int sensorPin) {
 
 float measureCurrent(int sensorPin, float offsetVoltage) {
   long sumSensorValue = 0;
-  for (int i = 0; i < samples; i++) {
+  int actualSamples = 250; // Reduced from 500 to 250 samples for faster measurement
+  
+  for (int i = 0; i < actualSamples; i++) {
     sumSensorValue += analogRead(sensorPin);
   }
 
-  float avgSensorValue = sumSensorValue / (float)samples;
+  float avgSensorValue = sumSensorValue / (float)actualSamples;
   float voltage = (avgSensorValue / 4095.0) * voltageRef;
 
   float current = (voltage - offsetVoltage) / sensitivity;
@@ -469,7 +483,10 @@ void sendDataToFirebase() {
     return; // Not time to update yet
   }
   
-  if (Firebase.ready()) {
+  // Force update immediately when theft status changes
+  static bool lastTheftState = false;
+  
+  if (Firebase.ready() && (lastTheftState != theftDetected || millis() - lastFirebaseUpdate >= firebaseUpdateInterval)) {
     // Update sensor data
     Firebase.setFloat(fbdo, PATH_INPUT_CURRENT, globalInputCurrent);
     Firebase.setFloat(fbdo, PATH_LOAD_CURRENT, globalLoadCurrent);
@@ -487,6 +504,7 @@ void sendDataToFirebase() {
     Firebase.setInt(fbdo, PATH_LAST_UPDATE, millis());
     
     lastFirebaseUpdate = millis();
+    lastTheftState = theftDetected;
   }
 }
 

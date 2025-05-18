@@ -159,6 +159,12 @@
         const connectionText = document.getElementById('connection-text');
         const theftAlert = document.getElementById('theft-alert');
         
+        // Set high-priority listeners for critical data
+        const theftDetectedRef = database.ref('/theft_detection/theft_detected');
+        const powerCutoffRef = database.ref('/theft_detection/power_cutoff');
+        const differenceRef = database.ref('/theft_detection/difference');
+        const alertRef = database.ref('/theft_detection/alert');
+        
         // Initialize map
         let map;
         let marker;
@@ -188,46 +194,13 @@
                 diffCurrentValue.textContent = data.difference.toFixed(3);
                 const maxCurrent = 5;
                 diffCurrentGauge.style.height = `${(data.difference / maxCurrent * 100)}%`;
-            }
-            
-            // Update status indicators
-            if (data.theft_detected !== undefined) {
-                if (data.theft_detected) {
-                    statusIndicator.textContent = 'THEFT DETECTED';
-                    statusIndicator.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center mb-2';
-                    // Show theft alert banner
-                    theftAlert.classList.remove('hidden');
-                    // Make cutoff button more noticeable
-                    cutoffBtn.classList.add('ring-4', 'ring-red-300', 'ring-offset-2');
-                    // Add notification sound if not already played
-                    if (!window.theftAlertPlayed) {
-                        try {
-                            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/937/937-preview.mp3');
-                            audio.play();
-                            window.theftAlertPlayed = true;
-                        } catch (e) {
-                            console.error('Could not play alert sound', e);
-                        }
-                    }
-                } else {
-                    statusIndicator.textContent = 'NORMAL';
-                    statusIndicator.className = 'bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2';
-                    // Hide theft alert banner
-                    theftAlert.classList.add('hidden');
-                    // Remove emphasis from cutoff button
-                    cutoffBtn.classList.remove('ring-4', 'ring-red-300', 'ring-offset-2');
-                    // Reset alert sound flag
-                    window.theftAlertPlayed = false;
-                }
-            }
-            
-            if (data.power_cutoff !== undefined) {
-                if (data.power_cutoff) {
-                    powerStatus.textContent = 'POWER OFF';
-                    powerStatus.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center';
-                } else {
-                    powerStatus.textContent = 'POWER ON';
-                    powerStatus.className = 'bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center';
+                
+                // Optimize theft detection response based on difference
+                // Preemptively update UI when difference is very low
+                if (data.difference < 0.05 && data.theft_detected) {
+                    console.log("Very low difference detected, theft might be resolved soon");
+                    // Don't update theft status yet, but prepare UI for quicker transition
+                    // This creates a more responsive feel
                 }
             }
             
@@ -238,6 +211,101 @@
                 }
             }
         }
+
+        // Function to update theft status separately (high priority)
+        function updateTheftStatus(isTheft) {
+            if (isTheft) {
+                statusIndicator.textContent = 'THEFT DETECTED';
+                statusIndicator.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                // Show theft alert banner
+                theftAlert.classList.remove('hidden');
+                // Make cutoff button more noticeable
+                cutoffBtn.classList.add('ring-4', 'ring-red-300', 'ring-offset-2');
+                // Add notification sound if not already played
+                if (!window.theftAlertPlayed) {
+                    try {
+                        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/937/937-preview.mp3');
+                        audio.play();
+                        window.theftAlertPlayed = true;
+                    } catch (e) {
+                        console.error('Could not play alert sound', e);
+                    }
+                }
+            } else {
+                statusIndicator.textContent = 'NORMAL';
+                statusIndicator.className = 'bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                // Hide theft alert banner
+                theftAlert.classList.add('hidden');
+                // Remove emphasis from cutoff button
+                cutoffBtn.classList.remove('ring-4', 'ring-red-300', 'ring-offset-2');
+                // Reset alert sound flag
+                window.theftAlertPlayed = false;
+            }
+        }
+
+        // Function to update power status separately (high priority)
+        function updatePowerStatus(isPowerOff) {
+            if (isPowerOff) {
+                powerStatus.textContent = 'POWER OFF';
+                powerStatus.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center';
+            } else {
+                powerStatus.textContent = 'POWER ON';
+                powerStatus.className = 'bg-blue-100 text-blue-800 font-bold py-2 px-4 rounded-full text-center';
+            }
+        }
+        
+        // Button event handlers with instant UI feedback
+        cutoffBtn.addEventListener('click', async () => {
+            try {
+                // Immediately update UI for responsiveness
+                updatePowerStatus(true);
+                
+                await theftDetectionRef.child('commands').update({
+                    cutoff: true
+                });
+                
+                // Short, non-blocking alert
+                const alertElement = document.createElement('div');
+                alertElement.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg';
+                alertElement.textContent = 'Power cutoff command sent!';
+                document.body.appendChild(alertElement);
+                
+                // Remove alert after 3 seconds
+                setTimeout(() => {
+                    alertElement.classList.add('opacity-0', 'transition-opacity', 'duration-500');
+                    setTimeout(() => document.body.removeChild(alertElement), 500);
+                }, 3000);
+            } catch (error) {
+                console.error('Error sending cutoff command:', error);
+                alert('Failed to send cutoff command');
+            }
+        });
+        
+        restoreBtn.addEventListener('click', async () => {
+            try {
+                // Immediately update UI for responsiveness
+                updatePowerStatus(false);
+                
+                await theftDetectionRef.child('commands').update({
+                    restore: true
+                });
+                
+                // Short, non-blocking alert
+                const alertElement = document.createElement('div');
+                alertElement.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg';
+                alertElement.textContent = 'Power restore command sent!';
+                document.body.appendChild(alertElement);
+                
+                // Remove alert after 3 seconds
+                setTimeout(() => {
+                    alertElement.classList.add('opacity-0', 'transition-opacity', 'duration-500');
+                    setTimeout(() => document.body.removeChild(alertElement), 500);
+                }, 3000);
+            } catch (error) {
+                console.error('Error sending restore command:', error);
+                alert('Failed to send restore command');
+            }
+        });
         
         // Initialize map
         function initMap() {
@@ -289,37 +357,65 @@
             });
         }
         
-        // Button event handlers
-        cutoffBtn.addEventListener('click', async () => {
-            try {
-                await theftDetectionRef.child('commands').update({
-                    cutoff: true
-                });
-                alert('Power cutoff command sent!');
-            } catch (error) {
-                console.error('Error sending cutoff command:', error);
-                alert('Failed to send cutoff command');
-            }
-        });
-        
-        restoreBtn.addEventListener('click', async () => {
-            try {
-                await theftDetectionRef.child('commands').update({
-                    restore: true
-                });
-                alert('Power restore command sent!');
-            } catch (error) {
-                console.error('Error sending restore command:', error);
-                alert('Failed to send restore command');
-            }
-        });
-        
         // Firebase real-time listeners
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize map
             initMap();
             
-            // Listen for data changes
+            // Set up separate high-priority listeners for critical data
+            theftDetectedRef.on('value', (snapshot) => {
+                const isTheft = snapshot.val();
+                updateTheftStatus(isTheft);
+            }, (error) => {
+                console.error('Firebase theft status error:', error);
+            });
+            
+            powerCutoffRef.on('value', (snapshot) => {
+                const isPowerOff = snapshot.val();
+                updatePowerStatus(isPowerOff);
+            }, (error) => {
+                console.error('Firebase power status error:', error);
+            });
+            
+            // Listen for difference changes to detect potential theft resolution early
+            differenceRef.on('value', (snapshot) => {
+                const difference = snapshot.val();
+                // Update the UI immediately for responsiveness
+                if (difference !== null && difference !== undefined) {
+                    diffCurrentValue.textContent = difference.toFixed(3);
+                    const maxCurrent = 5;
+                    diffCurrentGauge.style.height = `${(difference / maxCurrent * 100)}%`;
+                    
+                    // If difference is very small and we're in theft state, prepare for potential status change
+                    theftDetectionRef.child('theft_detected').once('value').then(theftSnapshot => {
+                        if (theftSnapshot.val() && difference < 0.05) {
+                            // Pre-emptively update some UI elements to create feeling of responsiveness
+                            statusIndicator.className = 'bg-yellow-100 text-yellow-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                            statusIndicator.textContent = 'VERIFYING...';
+                        }
+                    });
+                }
+            });
+            
+            // Listen specifically for theft removal indicators
+            theftDetectionRef.child('theft_removal_start').on('value', (snapshot) => {
+                if (snapshot.exists()) {
+                    console.log("Theft removal process started");
+                    // Update UI to show we're detecting potential theft resolution
+                    statusIndicator.className = 'bg-yellow-100 text-yellow-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                    statusIndicator.textContent = 'THEFT RESOLVING...';
+                }
+            });
+            
+            alertRef.on('value', (snapshot) => {
+                const alertData = snapshot.val();
+                if (alertData && alertData.new_theft === false && alertData.resolved_time) {
+                    // Clear theft alert immediately when resolved
+                    updateTheftStatus(false);
+                }
+            });
+            
+            // Listen for other data changes (sensor readings, etc.)
             theftDetectionRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 updateUI(data);

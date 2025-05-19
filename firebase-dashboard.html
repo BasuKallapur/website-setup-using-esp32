@@ -584,12 +584,19 @@
                         statusIndicator.textContent = 'POWER CUTOFF';
                         statusIndicator.className = 'bg-gray-100 text-gray-800 font-bold py-2 px-4 rounded-full text-center mb-2';
                         
+                        // Track that power was cut off for the most recent theft event
+                        if (theftHistory.length > 0 && !theftHistory[0].resolved) {
+                            theftHistory[0].powerCutoff = true;
+                            saveTheftHistory();
+                            renderTheftHistory();
+                        }
+                        
                         // Direct state approach - set power state to OFF (1)
                         await database.ref('/theft_detection/power_state').set(1);
                         
                         // Show visual feedback
                         const alertElement = document.createElement('div');
-                        alertElement.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+                        alertElement.className = 'fixed top-4 right-4 bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg z-50';
                         alertElement.textContent = 'Power cutoff command sent!';
                         document.body.appendChild(alertElement);
                         
@@ -620,14 +627,25 @@
                         
                         // Check theft status to set proper display
                         theftDetectionRef.child('theft_detected').once('value').then(snapshot => {
-                            if (snapshot.val()) {
+                            const isTheft = snapshot.val();
+                            
+                            if (isTheft) {
                                 // Still theft detected after power restored
                                 statusIndicator.textContent = 'THEFT DETECTED';
                                 statusIndicator.className = 'bg-red-100 text-red-800 font-bold py-2 px-4 rounded-full text-center mb-2';
                             } else {
-                                // No theft
+                                // No theft - this is when we should mark resolution
                                 statusIndicator.textContent = 'NORMAL';
                                 statusIndicator.className = 'bg-green-100 text-green-800 font-bold py-2 px-4 rounded-full text-center mb-2';
+                                
+                                // Check if we have an unresolved theft that had power cut off
+                                if (theftHistory.length > 0 && !theftHistory[0].resolved && theftHistory[0].powerCutoff) {
+                                    // Now we can mark it as resolved
+                                    theftHistory[0].resolved = true;
+                                    theftHistory[0].resolutionDate = new Date().toISOString();
+                                    saveTheftHistory();
+                                    renderTheftHistory();
+                                }
                             }
                         });
                         
@@ -728,7 +746,8 @@
                     latitude: data?.location?.latitude || 12.938477,
                     longitude: data?.location?.longitude || 77.564919,
                     difference: data?.difference || 0,
-                    resolved: false
+                    resolved: false,
+                    powerCutoff: false // Track if power was cut off for this theft
                 };
                 
                 // Check if we already have this theft recorded (within last 5 minutes)
@@ -749,11 +768,16 @@
         }
         
         function updateTheftResolution(isResolved) {
+            // We'll replace this function with new logic
+            // Only mark as resolved if power was cut off and then restored
             if (isResolved && theftHistory.length > 0 && !theftHistory[0].resolved) {
-                theftHistory[0].resolved = true;
-                theftHistory[0].resolutionDate = new Date().toISOString();
-                saveTheftHistory();
-                renderTheftHistory();
+                // Check if this is coming from a power restore event after cutoff
+                if (theftHistory[0].powerCutoff) {
+                    theftHistory[0].resolved = true;
+                    theftHistory[0].resolutionDate = new Date().toISOString();
+                    saveTheftHistory();
+                    renderTheftHistory();
+                }
             }
         }
         
@@ -966,7 +990,9 @@
                         addTheftEvent(data, true);
                     });
                 } else {
-                    updateTheftResolution(true);
+                    // Don't automatically mark as resolved - wait for complete cycle
+                    // This is commenting out the previous behavior
+                    // updateTheftResolution(true);
                 }
             });
             

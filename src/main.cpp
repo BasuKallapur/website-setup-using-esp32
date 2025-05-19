@@ -577,16 +577,21 @@ void checkFirebaseCommands() {
         Serial.println("Turning power ON");
         digitalWrite(relayPin, LOW);  // Restore power
         powerCutoff = false;
-        theftDetected = false;
         
-        // Reset theft detection variables
+        // Don't automatically reset theft detection
+        // Let the actual current measurements determine if theft is still happening
+        // theftDetected remains unchanged until current measurements confirm
+        
+        // Only reset the timers to allow faster re-detection if needed
         theftStartTime = 0;
         theftRemovalTime = 0;
       }
       
       // Update actual state in Firebase
       Firebase.setBool(fbdo, PATH_POWER_CUTOFF, powerCutoff);
-      Firebase.setBool(fbdo, PATH_THEFT_DETECTED, theftDetected);
+      
+      // We're not changing theft status in Firebase here anymore
+      // Only update it when the current measurements change it
       
       // Acknowledge command execution with timestamp
       Firebase.setInt(fbdo, POWER_COMMAND_ACK, millis());

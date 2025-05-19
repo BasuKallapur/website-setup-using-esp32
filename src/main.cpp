@@ -10,6 +10,14 @@
   #include <FirebaseESP8266.h>
 #endif
 
+// Power state constants
+#define POWER_ON 0
+#define POWER_OFF 1
+
+// New direct paths for power control
+const char* POWER_STATE_PATH = "/theft_detection/power_state";
+const char* POWER_COMMAND_ACK = "/theft_detection/power_command_ack";
+
 // Function prototypes
 float measureOffset(int sensorPin);
 float measureCurrent(int sensorPin, float offsetVoltage);
@@ -335,14 +343,29 @@ void setup() {
     if (Firebase.ready()) {
       Serial.println("Firebase connected successfully");
       
-      // Set up initial command values
+      // Set up initial command values (legacy support)
       Firebase.setBool(fbdo, PATH_CMD_CUTOFF, false);
       Firebase.setBool(fbdo, PATH_CMD_RESTORE, false);
       
-      // Add initial data to verify connection
+      // Set up new power command system with separate paths
+      Firebase.setInt(fbdo, "/theft_detection/commands/cutoff_time", 0);
+      Firebase.setInt(fbdo, "/theft_detection/commands/restore_time", 0);
+      Firebase.setInt(fbdo, "/theft_detection/status/cutoff_executed", 0);
+      Firebase.setInt(fbdo, "/theft_detection/status/restore_executed", 0);
+      
+      // Update current state in Firebase
+      Firebase.setBool(fbdo, PATH_POWER_CUTOFF, powerCutoff);
+      Firebase.setBool(fbdo, PATH_THEFT_DETECTED, theftDetected);
+      
+      // Add initial sensor data
       Firebase.setFloat(fbdo, PATH_INPUT_CURRENT, 0);
       Firebase.setFloat(fbdo, PATH_LOAD_CURRENT, 0);
+      Firebase.setFloat(fbdo, PATH_DIFFERENCE, 0);
+      
       Serial.println("Initial Firebase data set");
+      
+      // Initial check for commands to ensure static variables are initialized
+      checkFirebaseCommands();
     } else {
       Serial.println("Firebase initialization failed");
       Serial.print("Reason: ");
@@ -358,6 +381,11 @@ void loop() {
   // Handle client requests
   server.handleClient();
   
+  // Check for Firebase commands first - high priority
+  if (WiFi.status() == WL_CONNECTED) {
+    checkFirebaseCommands();
+  }
+  
   // Measure current values
   float inputCurrent = measureCurrent(inputSensorPin, inputOffsetVoltage);
   float loadCurrent = measureCurrent(loadSensorPin, loadOffsetVoltage);
@@ -368,10 +396,18 @@ void loop() {
   globalLoadCurrent = loadCurrent;
   globalCurrentDifference = currentDifference;
 
-  // Send data to Firebase and check for commands
+  // Send data to Firebase regularly
   if (WiFi.status() == WL_CONNECTED) {
     sendDataToFirebase();
-    checkFirebaseCommands();
+    
+    // Update power status regularly to ensure consistency
+    static unsigned long lastStatusUpdate = 0;
+    if (millis() - lastStatusUpdate > 2000) {
+      if (Firebase.ready()) {
+        Firebase.setBool(fbdo, PATH_POWER_CUTOFF, powerCutoff);
+      }
+      lastStatusUpdate = millis();
+    }
   }
 
   // THEFT DETECTION LOGIC
@@ -508,28 +544,57 @@ void sendDataToFirebase() {
   }
 }
 
-// Check Firebase for remote commands
+// Check Firebase for direct power state command
 void checkFirebaseCommands() {
-  if (Firebase.ready()) {
-    // Check for cutoff command
-    if (Firebase.getBool(fbdo, PATH_CMD_CUTOFF) && fbdo.boolData()) {
-      digitalWrite(relayPin, HIGH);  // Cut off power
-      powerCutoff = true;
-      Serial.println("Manual power cutoff activated via Firebase");
-      
-      // Reset the command
-      Firebase.setBool(fbdo, PATH_CMD_CUTOFF, false);
-    }
+  if (!Firebase.ready()) {
+    return;
+  }
+  
+  // Read the desired power state directly
+  if (Firebase.getInt(fbdo, POWER_STATE_PATH)) {
+    int desiredState = fbdo.intData();
+    Serial.print("Read power_state from Firebase: ");
+    Serial.println(desiredState);
     
-    // Check for restore command
-    if (Firebase.getBool(fbdo, PATH_CMD_RESTORE) && fbdo.boolData()) {
-      digitalWrite(relayPin, LOW);  // Restore power
-      powerCutoff = false;
-      theftDetected = false;
-      Serial.println("Manual power restore activated via Firebase");
+    // Current actual state
+    int currentState = powerCutoff ? POWER_OFF : POWER_ON;
+    
+    // Only take action if there's a mismatch between desired and actual state
+    if (desiredState != currentState) {
+      Serial.print("State mismatch - Desired: ");
+      Serial.print(desiredState);
+      Serial.print(", Current: ");
+      Serial.println(currentState);
       
-      // Reset the command
-      Firebase.setBool(fbdo, PATH_CMD_RESTORE, false);
+      if (desiredState == POWER_OFF) {
+        // Turn power OFF
+        Serial.println("Turning power OFF");
+        digitalWrite(relayPin, HIGH);  // Cut off power
+        powerCutoff = true;
+        
+      } else if (desiredState == POWER_ON) {
+        // Turn power ON
+        Serial.println("Turning power ON");
+        digitalWrite(relayPin, LOW);  // Restore power
+        powerCutoff = false;
+        theftDetected = false;
+        
+        // Reset theft detection variables
+        theftStartTime = 0;
+        theftRemovalTime = 0;
+      }
+      
+      // Update actual state in Firebase
+      Firebase.setBool(fbdo, PATH_POWER_CUTOFF, powerCutoff);
+      Firebase.setBool(fbdo, PATH_THEFT_DETECTED, theftDetected);
+      
+      // Acknowledge command execution with timestamp
+      Firebase.setInt(fbdo, POWER_COMMAND_ACK, millis());
+      
+      Serial.println("Power state updated and acknowledged");
     }
+  } else {
+    Serial.print("Failed to read power_state: ");
+    Serial.println(fbdo.errorReason().c_str());
   }
 }

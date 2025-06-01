@@ -291,5 +291,7 @@
   "C_Cpp_Runner.msvcSecureNoWarnings": false,
   "files.associations": {
     "system_error": "cpp"
-  }
+  },
+  "C_Cpp.clang_format_path": "${env:APPDATA}\\npm\\clang-format.cmd",
+  "C_Cpp.formatting": "disabled"
 }

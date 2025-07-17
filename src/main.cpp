@@ -47,8 +47,8 @@ bool theftDetected = false;       // Theft detection status
 bool powerCutoff = false;         // Power cutoff state
 
 // WiFi and WebServer Configuration
-const char* ssid = "unnathi 2.4G";        // Replace with your WiFi SSID
-const char* password = "8217566789"; // Replace with your WiFi password
+const char* ssid = "Replace with your WiFi SSID";        
+const char* password = "Replace with your WiFi password"; 
 
 // Hardcoded location information
 const float latitude = 12.938477;   // nandi aroma
@@ -63,7 +63,7 @@ float globalLoadCurrent = 0;
 float globalCurrentDifference = 0;
 
 // Firebase configuration
-#define API_KEY "AIzaSyBc1-TjprtzvD0S_AcNNnO3xhs-c1pBYVU"
+#define API_KEY "enter_you_api_key"
 #define DATABASE_URL "https://esp32-theft-detection-default-rtdb.asia-southeast1.firebasedatabase.app"
 
 // Firebase objects
@@ -73,7 +73,7 @@ FirebaseConfig config;
 
 // Initialize Firebase calls
 #define FIREBASE_HOST "esp32-theft-detection-default-rtdb.asia-southeast1.firebasedatabase.app"
-#define FIREBASE_AUTH "AIzaSyBc1-TjprtzvD0S_AcNNnO3xhs-c1pBYVU"  // Use API key as auth token
+#define FIREBASE_AUTH "enter_you_api_key"  // Use API key as auth token
 
 // Define Firebase database paths - using full paths instead of concatenation
 const char* PATH_ROOT = "/theft_detection";
